@@ -1,11 +1,9 @@
-export const CATS = {
-  ebook: 'อีบุ๊ก', template: 'เทมเพลต', 'source-code': 'ซอร์สโค้ด',
-  'online-course': 'คอร์สออนไลน์', 'design-assets': 'ไฟล์กราฟิก',
-};
+export const LICENSES = { personal: 'ใช้งานส่วนตัว', commercial: 'ใช้งานเชิงพาณิชย์ได้' };
 export const baht = (n) => '฿' + Number(n ?? 0).toLocaleString('th-TH');
 export const when = (d, time = true) =>
   d ? new Date(d).toLocaleString('th-TH', time ? { dateStyle: 'medium', timeStyle: 'short' } : { dateStyle: 'medium' }) : '';
 export const mb = (b) => (b ? `${(b / 1048576).toFixed(1)} MB` : '');
+export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // localStorage can throw (private mode, blocked storage): never let that break a page
 export const store = {
@@ -13,12 +11,18 @@ export const store = {
   set: (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, JSON.stringify(v)); } catch {} },
 };
 
-export async function api(path, { method = 'GET', body } = {}) {
+const authHeader = () => {
   const token = store.get('token');
+  return token ? { Authorization: `Bearer ${token}` } : {};
+};
+
+// body: object → JSON; string → sent as-is with `type` (the CSV import)
+export async function api(path, { method = 'GET', body, type } = {}) {
+  const raw = typeof body === 'string';
   const res = await fetch('/api' + path, {
     method,
-    headers: { ...(token && { Authorization: `Bearer ${token}` }), ...(body && { 'Content-Type': 'application/json' }) },
-    body: body && JSON.stringify(body),
+    headers: { ...authHeader(), ...(body && { 'Content-Type': raw ? type : 'application/json' }) },
+    body: raw ? body : body && JSON.stringify(body),
   });
   const data = res.status === 204 ? null : await res.json().catch(() => null);
   if (!res.ok) throw Object.assign(new Error(data?.error || 'เกิดข้อผิดพลาด ลองใหม่อีกครั้ง'), { status: res.status, data });
@@ -44,6 +48,16 @@ export function upload(path, method, formData, onProgress) {
     xhr.send(formData);
   });
   return { promise, abort: () => xhr.abort() };
+}
+
+// Admin exports need the Bearer header, which a plain <a href> can't send: fetch → blob → click.
+export async function saveFile(path) {
+  const res = await fetch('/api' + path, { headers: authHeader() });
+  if (!res.ok) throw new Error('ส่งออกข้อมูลไม่สำเร็จ');
+  const name = res.headers.get('content-disposition')?.match(/filename="?([^";]+)/)?.[1] ?? 'export';
+  const url = URL.createObjectURL(await res.blob());
+  Object.assign(document.createElement('a'), { href: url, download: name }).click();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
 // App Inventor's WebViewer can't download files. The app listens for WebViewStringChange

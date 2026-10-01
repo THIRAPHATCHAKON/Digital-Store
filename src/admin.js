@@ -369,7 +369,8 @@ admin.post('/import/products', express.text({ type: ['text/csv', 'text/plain'], 
   const rows = lines.slice(0, 1000).map((l) => Object.fromEntries(cols.map((c, i) => [c, l[i] ?? ''])));
   const cats = await categorySlugs();
   const errors = missing.length ? [] : rows.flatMap((r, i) => {
-    const e = Object.values(productErrors(r, false, cats));
+    // imported rows are always drafts, whatever a `status` column in the file says (exports have one)
+    const e = Object.values(productErrors({ ...r, status: 'DRAFT' }, false, cats));
     return e.length ? [{ row: i + 2, error: e.join(' · ') }] : []; // +2: header line, 1-based
   });
   const report = {

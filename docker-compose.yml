@@ -21,6 +21,7 @@ services:
       context: ./web
       args:
         NEXT_PUBLIC_STRIPE_PK: ${NEXT_PUBLIC_STRIPE_PK} # baked in at build time
+        NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-} # empty = no "continue with Google" button
     networks:
       nginx:
         aliases: [ds-web]

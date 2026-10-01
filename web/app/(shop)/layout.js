@@ -8,8 +8,8 @@ export default function ShopLayout({ children }) {
     <>
       <Header />
       <main className="wrap">{children}</main>
-      {/* tabs dimmed during checkout so the buyer can't wander off mid-payment */}
-      <Tabs disabled={path === '/checkout'} />
+      {/* tabs dimmed during checkout and payment so the buyer can't wander off mid-payment */}
+      <Tabs disabled={path === '/checkout' || path === '/checkout/payment'} />
     </>
   );
 }

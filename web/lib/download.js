@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { api, openExternal } from './api';
 
-// Shared by [8] library and [9] order history: both spend the same download quota.
+// Shared by the library, order history and payment result: all spend the same download quota.
 export function useDownload(onDone) {
   const [busy, setBusy] = useState(null);
   const [error, setError] = useState({});
@@ -18,5 +18,15 @@ export function useDownload(onDone) {
       setBusy(null);
     }
   }
-  return { download, busy, error };
+  // "ดาวน์โหลดทั้งหมด": one file after another — a browser drops downloads that start at the same instant
+  const [all, setAll] = useState(false);
+  async function downloadAll(itemIds) {
+    setAll(true);
+    for (const id of itemIds) {
+      await download(id);
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+    setAll(false);
+  }
+  return { download, downloadAll, busy, busyAll: all, error };
 }

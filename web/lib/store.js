@@ -7,11 +7,15 @@ export const useStore = () => useContext(Ctx);
 
 // Guests keep the cart in localStorage; it's merged into the server cart on login.
 const guestCart = () => store.get('guestCart') ?? [];
+// shown until /api/settings answers; the admin Settings page overrides them
+const SHOP = { store_name: 'Digital Store', support_email: '', hero_title: '', hero_text: '' };
 
 export function StoreProvider({ children }) {
   const [user, setUser] = useState(undefined); // undefined = still loading, null = signed out
   const [cartCount, setCartCount] = useState(0);
   const [toast, setToast] = useState(null);
+  const [cats, setCats] = useState([]);
+  const [shop, setShop] = useState(SHOP);
 
   const refresh = useCallback(async () => {
     if (!store.get('token')) { setUser(null); setCartCount(guestCart().length); return; }
@@ -22,7 +26,15 @@ export function StoreProvider({ children }) {
       store.set('token', null); setUser(null); setCartCount(guestCart().length);
     }
   }, []);
-  useEffect(() => { refresh(); }, [refresh]);
+  // categories and shop settings are edited in the admin, so every page reads them from here
+  const loadShop = useCallback(() => {
+    api('/categories').then((r) => setCats(r.items)).catch(() => {});
+    api('/settings').then((r) => setShop({ ...SHOP, ...r })).catch(() => {});
+  }, []);
+  useEffect(() => { refresh(); loadShop(); }, [refresh, loadShop]);
+
+  // unknown slug (category list still loading, or deleted) → the slug itself in the accent colour
+  const cat = useCallback((slug) => cats.find((c) => c.slug === slug) ?? { slug, name: slug, color: 'var(--ac)' }, [cats]);
 
   const notify = useCallback((msg, action) => {
     setToast({ msg, action, id: Date.now() });
@@ -45,6 +57,7 @@ export function StoreProvider({ children }) {
   async function signOut() {
     await api('/auth/logout', { method: 'POST' }).catch(() => {});
     store.set('token', null);
+    store.set('billing', null); // name and address typed at checkout shouldn't outlive the session on a shared device
     await refresh();
   }
   async function addToCart(id) {
@@ -65,7 +78,7 @@ export function StoreProvider({ children }) {
   }
 
   return (
-    <Ctx.Provider value={{ user, cartCount, refresh, signIn, signOut, addToCart, removeFromCart, guestCart, notify }}>
+    <Ctx.Provider value={{ user, cartCount, cats, cat, shop, loadShop, refresh, signIn, signOut, addToCart, removeFromCart, guestCart, notify }}>
       {children}
       {toast && (
         <div className="toast" key={toast.id} role="status">

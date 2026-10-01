@@ -1,79 +1,79 @@
 'use client';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { api, CATS, mb, when } from '../../../lib/api';
+import { api, when } from '../../../lib/api';
 import { useStore } from '../../../lib/store';
 import { useDownload } from '../../../lib/download';
-import { Cover, Empty, SignedOut } from '../../../components/ui';
+import { Empty, ProductCard, SignedOut, Title } from '../../../components/ui';
 
-// [8] My library — only items from PAID orders
+const VIEWS = [['all', 'สินค้าทั้งหมด'], ['downloaded', 'ดาวน์โหลดแล้ว'], ['updates', 'มีอัปเดต']];
+
+// My library — only items from PAID orders
 export default function Library() {
-  const { user } = useStore();
+  const { user, shop } = useStore();
   const [items, setItems] = useState(null);
-  const [cat, setCat] = useState('');
+  const [view, setView] = useState('all');
   const [term, setTerm] = useState('');
+  // a download clears "มีอัปเดต": the buyer now has the latest file
   const { download, busy, error } = useDownload((id) =>
-    setItems((xs) => xs.map((x) => (x.item_id === id ? { ...x, downloads: x.downloads + 1 } : x))));
+    setItems((xs) => xs.map((x) => (x.item_id === id ? { ...x, downloads: x.downloads + 1, has_update: false } : x))));
 
   useEffect(() => { if (user) api('/library').then((r) => setItems(r.items)); }, [user]);
 
-  if (user === null) return <SignedOut title="เข้าสู่ระบบเพื่อดูคลังของคุณ" text="สินค้าที่ซื้อแล้วผูกกับบัญชีของคุณ เข้าสู่ระบบด้วยบัญชีเดิมเพื่อดาวน์โหลดไฟล์ซ้ำ" next="/library" />;
-  if (!items) return <div className="ph" style={{ height: 320 }} />;
+  const title = <Title title="คลังของฉัน" desc="ทุกอย่างที่คุณเป็นเจ้าของ รวมไว้ในที่เดียว" />;
+  if (user === null) return <>{title}<SignedOut title="เข้าสู่ระบบเพื่อดูคลังของคุณ" text="สินค้าที่ซื้อแล้วผูกกับบัญชีของคุณ เข้าสู่ระบบด้วยบัญชีเดิมเพื่อดาวน์โหลดไฟล์ซ้ำ" next="/library" /></>;
+  if (!items) return <>{title}<div className="ph" style={{ height: 266 }} /></>;
   if (!items.length) return (
-    <div className="card"><Empty title="คุณยังไม่มีสินค้าในคลัง" text="สินค้าที่ซื้อแล้วจะมาอยู่ที่นี่ทันทีหลังชำระเงินสำเร็จ และดาวน์โหลดซ้ำได้ตลอดอายุสิทธิ์">
-      <Link className="btn" href="/">เลือกซื้อสินค้า</Link><Link className="btn2" href="/orders">ดูประวัติคำสั่งซื้อ</Link>
-    </Empty></div>
+    <>
+      {title}
+      <Empty title="ยังไม่มีอะไรในคลัง" text="สินค้าที่ซื้อแล้วและไฟล์ดาวน์โหลดจะมาอยู่ที่นี่ทันทีหลังชำระเงินสำเร็จ">
+        <Link className="btn" href="/search">เลือกซื้อสินค้า</Link><Link className="btn2" href="/orders">ดูคำสั่งซื้อ</Link>
+      </Empty>
+    </>
   );
 
-  const counts = items.reduce((m, x) => ({ ...m, [x.category]: (m[x.category] ?? 0) + 1 }), {});
-  const shown = items.filter((x) => (!cat || x.category === cat) && x.name.toLowerCase().includes(term.toLowerCase()));
+  const shown = items.filter((x) => x.name.toLowerCase().includes(term.toLowerCase())
+    && (view === 'all' || (view === 'downloaded' ? x.downloads > 0 : x.has_update)));
 
   return (
-    <div className="stack" style={{ gap: 20 }}>
-      <div><h1 className="h1">คลังของฉัน</h1><span className="mut">สินค้าที่คุณเป็นเจ้าของ {items.length} รายการ · ดาวน์โหลดซ้ำได้ตลอดอายุสิทธิ์</span></div>
-      <input className="inp" placeholder="ค้นหาในคลังของฉัน" value={term} onChange={(e) => setTerm(e.target.value)} style={{ maxWidth: 420 }} />
-      <div className="chips">
-        <button className={`chip ${!cat ? 'on' : ''}`} onClick={() => setCat('')}>ทั้งหมด {items.length}</button>
-        {Object.entries(counts).map(([c, n]) => (
-          <button key={c} className={`chip ${cat === c ? 'on' : ''}`} onClick={() => setCat(c)}>{CATS[c]} {n}</button>
+    <>
+      {title}
+      <div className="tools">
+        <form onSubmit={(e) => e.preventDefault()}>
+          <input className="srch" aria-label="ค้นหาในคลัง" placeholder="ค้นหาในคลังของฉัน" value={term} onChange={(e) => setTerm(e.target.value)} />
+        </form>
+        {VIEWS.map(([v, label]) => (
+          <button key={v} className={`chip ${view === v ? 'on' : ''}`} onClick={() => setView(v)}>{label}</button>
         ))}
       </div>
-      <div className="card">
+      {shown.length === 0 && <Empty title="ไม่พบสินค้าในมุมมองนี้" text="ลองเปลี่ยนคำค้นหรือกลับไปดูสินค้าทั้งหมด" />}
+      <div className="grid">
         {shown.map((x) => {
           const left = x.download_limit - x.downloads;
           const expired = new Date(x.expires_at) < new Date();
+          const usable = left > 0 && !expired;
           return (
-            <div key={x.item_id} className="between" style={{ padding: 16, borderBottom: '1px solid var(--ln2)', flexWrap: 'nowrap' }}>
-              <div className="row" style={{ flexWrap: 'nowrap', minWidth: 0 }}>
-                <Cover src={x.cover_url} className="thumb" label="" />
-                <div style={{ minWidth: 0 }}>
-                  <span className="tag">{x.category}</span>
-                  <div className="pt">{x.name}</div>
-                  <span className="mut mono" style={{ fontSize: 11 }}>{x.order_no}{x.version && ` · ${x.version}`} · ซื้อ {when(x.paid_at, false)}</span>
-                  <div className="mut hide-m" style={{ fontSize: 12 }}>{x.file_types} · {mb(x.file_size)}</div>
-                </div>
-              </div>
-              <div className="stack" style={{ alignItems: 'flex-end', gap: 4, flex: 'none', textAlign: 'right' }}>
-                {left > 0 && !expired ? (
-                  <>
-                    <button className="btn" disabled={busy === x.item_id} onClick={() => download(x.item_id)}>
-                      {busy === x.item_id ? 'กำลังเตรียมไฟล์…' : 'ดาวน์โหลด'}
-                    </button>
-                    <span className="mut" style={{ fontSize: 11 }}>ไฟล์จะเปิดในเบราว์เซอร์ภายนอก</span>
-                    <span className="mut" style={{ fontSize: 11 }}>เหลือ {left}/{x.download_limit} ครั้ง · หมดอายุ {when(x.expires_at, false)}</span>
-                  </>
-                ) : (
-                  <>
-                    <a className="btn2" href={`mailto:support@sukpat.dev?subject=${encodeURIComponent(`ขอลิงก์ใหม่ ${x.order_no} ${x.name}`)}`}>ขอลิงก์ใหม่</a>
-                    <span className="bad" style={{ fontSize: 11 }}>{expired ? 'สิทธิ์หมดอายุแล้ว' : `ใช้ครบ ${x.download_limit}/${x.download_limit} ครั้ง`} · ขอเพิ่มได้ทางอีเมล</span>
-                  </>
-                )}
-                {error[x.item_id] && <span className="bad" style={{ fontSize: 11 }}>{error[x.item_id]}</span>}
-              </div>
+            <div key={x.item_id} className="stack" style={{ gap: 6 }}>
+              <ProductCard p={x} href={`/products/${x.product_id}`} footer={usable ? (
+                <>
+                  <button className="btn" disabled={busy === x.item_id} onClick={() => download(x.item_id)}>
+                    {busy === x.item_id ? 'กำลังเตรียม…' : x.has_update ? 'ดาวน์โหลดอัปเดต' : 'ดาวน์โหลด'}
+                  </button>
+                  <span className="pd">เหลือ {left}/{x.download_limit}</span>
+                </>
+              ) : (
+                <a className="btn2 btnl" href={`mailto:${shop.support_email}?subject=${encodeURIComponent(`ขอลิงก์ใหม่ #${x.order_no} ${x.name}`)}`}>ขอลิงก์ใหม่</a>
+              )} />
+              <span className={`sm ${usable ? 'mut' : 'bad'}`}>
+                {error[x.item_id] ? <span className="bad">{error[x.item_id]}</span>
+                  : expired ? 'สิทธิ์ดาวน์โหลดหมดอายุแล้ว'
+                    : left <= 0 ? `ดาวน์โหลดครบ ${x.download_limit} ครั้งแล้ว`
+                      : `${x.version ? `${x.version} · ` : ''}ดาวน์โหลดได้ถึง ${when(x.expires_at, false)}`}
+              </span>
             </div>
           );
         })}
       </div>
-    </div>
+    </>
   );
 }
