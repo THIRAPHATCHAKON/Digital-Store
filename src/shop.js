@@ -174,6 +174,8 @@ shop.post('/checkout', requireAuth, async (req, res) => {
     res.status(201).json({ orderNo: order.order_no, total: order.total, clientSecret: pi.client_secret });
   } catch (e) {
     await q(`UPDATE orders SET status = 'FAILED', failure_code = 'stripe_error' WHERE id = $1`, [order.id]);
+    // products priced before the ฿10 rule in admin.js can still reach here
+    if (e.code === 'amount_too_small') throw new HttpError(400, 'ยอดชำระขั้นต่ำคือ 10 บาท');
     throw e;
   }
 });

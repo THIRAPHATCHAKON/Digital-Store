@@ -99,7 +99,8 @@ function productErrors(b, hasFile, cats) {
   const e = {};
   if (!String(b.name ?? '').trim()) e.name = 'กรุณากรอกชื่อสินค้า';
   if (!cats.has(b.category)) e.category = 'ไม่มีหมวดหมู่นี้';
-  if (!(Number(b.price) > 0 && Number(b.price) < 1e8)) e.price = 'ราคาต้องมากกว่า 0';
+  // Stripe refuses THB charges under ฿10 (amount_too_small)
+  if (!(Number(b.price) >= 10 && Number(b.price) < 1e8)) e.price = 'ราคาต้องไม่ต่ำกว่า 10 บาท';
   if (b.compare_at && !(Number(b.compare_at) >= 0 && Number(b.compare_at) < 1e8)) e.compare_at = 'ราคาก่อนลดไม่ถูกต้อง';
   if (String(b.short_description ?? '').length > 200) e.short_description = 'คำอธิบายสั้นยาวเกิน 200 ตัวอักษร';
   if (String(b.description ?? '').length > 2000) e.description = 'รายละเอียดยาวเกิน 2,000 ตัวอักษร';

@@ -10,7 +10,7 @@ const MAX_DESC = 2000;
 const check = {
   name: (v) => !v.trim() && 'กรุณากรอกชื่อสินค้า',
   category: (v) => !v && 'เลือกหมวดหมู่',
-  price: (v) => !(Number(v) > 0) && 'ราคาต้องมากกว่า 0',
+  price: (v) => !(Number(v) >= 10) && 'ราคาต้องไม่ต่ำกว่า 10 บาท',
   short_description: (v) => v.length > 200 && 'คำอธิบายสั้นยาวเกิน 200 ตัวอักษร',
   description: (v) => v.length > MAX_DESC && `ยาวเกิน ${MAX_DESC.toLocaleString()} ตัวอักษร`,
 };
