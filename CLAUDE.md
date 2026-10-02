@@ -14,10 +14,11 @@
 - Web: Next.js
 - Mobile: MIT App Inventor (.apk) เรียก API ผ่าน Web component
   → auth ใช้ Bearer token ห้ามพึ่ง cookie
-- Desktop: <Electron / Tauri / PWA ?>
+- Desktop: Electron (Windows) ใน `desktop/` เป็นแค่เปลือกที่เปิดเว็บจริง ไม่มี UI และไม่เรียก API เอง
+  → แก้เว็บครั้งเดียว desktop ได้ตามทันที ไม่ต้อง build ใหม่
 
 ## Rules
-- ใน repo นี้จะทำส่วนของตัว backend server Desktop จะทำอีกrepo
+- ใน repo นี้มี backend server, เว็บ (`web/`) และ desktop app (`desktop/`)
 - Frontend เรียก API ผ่าน path `/api` (domain เดียวกัน → ไม่ต้องตั้ง CORS)
 
 ## Mypoper

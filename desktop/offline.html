@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="th">
+<meta charset="utf-8">
+<title>Digital Store</title>
+<!-- colours repeat the tokens in web/app/globals.css: this page is all there is when the site is unreachable -->
+<style>
+  body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f6f7fb;color:#111827;font:14px/1.6 "IBM Plex Sans Thai","Leelawadee UI",system-ui,sans-serif}
+  main{display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;padding:32px;background:#fff;border-radius:12px;width:min(380px,84vw)}
+  .lg{font-weight:800;font-size:20px;color:#4f46e5}
+  h1{font-size:18px;margin:12px 0 0}
+  p{margin:0;color:#667085}
+  a{margin-top:14px;padding:11px 28px;border-radius:12px;background:#4f46e5;color:#fff;font-weight:600;text-decoration:none}
+</style>
+<main>
+  <div class="lg">◆ Digital Store</div>
+  <h1>เชื่อมต่อร้านค้าไม่ได้</h1>
+  <p>ตรวจสอบการเชื่อมต่ออินเทอร์เน็ต แล้วลองใหม่อีกครั้ง</p>
+  <a id="retry" href="https://digital-store.sukpat.dev">ลองใหม่</a>
+</main>
+<script>
+  // main.js passes the page that failed, so retrying returns there instead of the home page
+  const url = new URLSearchParams(location.search).get('url');
+  if (url) document.getElementById('retry').href = url;
+</script>
+</html>

@@ -3,3 +3,5 @@ node_modules
 uploads
 .next
 .claude/settings.local.json
+desktop/dist
+desktop/smoke.png
