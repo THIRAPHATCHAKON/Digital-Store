@@ -1,0 +1,24 @@
+# sukpat.dev's VPS only. Ports 80/443 there belong to the shared nginx of the lab-docker project, so this
+# project's own nginx stays off and api/web join that network instead (digital-store.sukpat.dev.conf).
+# Enable with COMPOSE_FILE=docker-compose.yml:lab-docker/compose.yml in .env.
+services:
+  nginx:
+    profiles: [disabled] # never activated, so `docker compose up` skips it
+
+  api:
+    networks:
+      default:
+      db:
+      lab:
+        aliases: [ds-api] # "api" clashes with other projects on the shared network
+
+  web:
+    networks:
+      default:
+      lab:
+        aliases: [ds-web]
+
+networks:
+  lab:
+    name: lab-docker_default
+    external: true

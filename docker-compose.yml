@@ -1,30 +1,34 @@
-# Backend + DB. The nginx / frontend services live alongside these on the VPS
-# and proxy /api → http://ds-api:4000 (nginx must forward Host and X-Forwarded-Proto, and allow client_max_body_size 500m).
+# The whole store on one VM: nginx (https) → web + api → Postgres. Only .env is needed (see .env.example).
 services:
+  nginx: # / → web:3000, /api → api:4000; gets and renews its own Let's Encrypt certificate (nginx/cert.sh)
+    build: ./nginx
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+    ports: ["80:80", "443:443"]
+    volumes:
+      - certs:/etc/letsencrypt
+    restart: unless-stopped
+
   api:
     build: .
     env_file: .env
     environment:
-      DATABASE_URL: postgres://shop:${POSTGRES_PASSWORD}@db:5432/shop
+      DATABASE_URL: postgres://shop:${POSTGRES_PASSWORD:-shop}@db:5432/shop
       UPLOAD_DIR: /data
     volumes:
       - uploads:/data
-    depends_on: [db]
-    networks:
-      default:
-      nginx:
-        aliases: [ds-api] # "api" clashes with other projects on the shared network
+    depends_on:
+      db:
+        condition: service_healthy # the first-admin seed needs the schema at startup
+    networks: [default, db]
     restart: unless-stopped
 
-  web: # nginx: / → http://ds-web:3000
+  web:
     build:
       context: ./web
       args:
         NEXT_PUBLIC_STRIPE_PK: ${NEXT_PUBLIC_STRIPE_PK} # baked in at build time
         NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-} # empty = no "continue with Google" button
-    networks:
-      nginx:
-        aliases: [ds-web]
     restart: unless-stopped
 
   db:
@@ -32,17 +36,21 @@ services:
     environment:
       POSTGRES_USER: shop
       POSTGRES_DB: shop
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-shop}
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./db/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    healthcheck: # -h 127.0.0.1: while schema.sql is still running, postgres only listens on its unix socket
+      test: pg_isready -U shop -d shop -h 127.0.0.1
+      interval: 3s
+      retries: 20
+    networks: [db]
     restart: unless-stopped
 
 networks:
-  nginx: # the VPS's existing nginx container (lab-docker project) lives here
-    name: lab-docker_default
-    external: true
+  db: # Postgres has no published port and only the api shares this network, so its password may stay at the default
 
 volumes:
   pgdata:
   uploads:
+  certs:

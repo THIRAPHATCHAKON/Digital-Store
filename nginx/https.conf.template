@@ -1,0 +1,27 @@
+# cert.sh renders this into conf.d/https.conf (${DOMAIN} from .env) once the certificate exists.
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name ${DOMAIN};
+
+    ssl_certificate     /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+
+    # resolver + variable = re-resolve after `docker compose up` recreates containers (no nginx reload needed)
+    resolver 127.0.0.11 valid=10s;
+
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    location /api/ {
+        client_max_body_size 500m; # largest product file
+        set $api http://api:4000;
+        proxy_pass $api;
+    }
+
+    location / {
+        set $web http://web:3000;
+        proxy_pass $web;
+    }
+}

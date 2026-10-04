@@ -5,7 +5,7 @@
 
 - **Backend:** Node.js 24 + Express 5 + PostgreSQL 17 — `src/`
 - **Frontend:** Next.js 15 — `web/` (หน้าตาตามไฟล์ Figma "Digital Store · Foundations 1.0")
-- **Deploy:** docker compose บน VPS, nginx reverse proxy → `https://digital-store.sukpat.dev`
+- **Deploy:** docker compose บน VM เครื่องเดียว (nginx + certbot, web, api, Postgres) — ตั้งค่าทั้งหมดใน `.env`
 
 ## โครงสร้าง
 
@@ -17,6 +17,8 @@ src/auth.js              สมัคร / ล็อกอิน / Google / ล�
 src/shop.js              หมวดหมู่, สินค้า, รีวิว, ตะกร้า, checkout, Stripe webhook, คำสั่งซื้อ, คลัง, ดาวน์โหลด
 src/admin.js             แดชบอร์ด, สินค้า, หมวดหมู่, คำสั่งซื้อ, ลูกค้า, ไฟล์, การชำระเงิน, นำเข้า/ส่งออก, ตั้งค่า
 test/                    node:test
+nginx/                   reverse proxy ใน compose: http.conf (port 80), https.conf.template (port 443), cert.sh (ขอ/ต่ออายุ cert)
+lab-docker/              เฉพาะ VPS ของ sukpat.dev ที่ใช้ nginx กลางร่วมกับ project อื่น — เครื่องอื่นไม่ต้องสนใจ
 web/app/(shop)/          หน้าลูกค้า: หน้าแรก ร้านค้า หมวดหมู่ สินค้า ตะกร้า checkout คำสั่งซื้อ คลัง โปรไฟล์
 web/app/login/           เข้าสู่ระบบ / สมัครสมาชิก (เต็มจอ ไม่มีแถบนำทาง)
 web/app/admin/           หน้าแอดมิน (desktop ≥1280px เท่านั้น)
@@ -26,35 +28,55 @@ web/app/globals.css      design tokens + class ทั้งหมด
 
 ## ติดตั้งบน server
 
+ต้องมีก่อน: VM ที่ลง Docker (มีคำสั่ง `docker compose`) · โดเมนที่ DNS A record ชี้มาที่ IP ของ VM แล้ว · เปิด port 80 และ 443
+
 ```bash
 git clone https://github.com/mekzqza/Digital-Store.git
 cd Digital-Store
 cp .env.example .env        # เติมค่าจริง (ดูตารางด้านล่าง)
 docker compose up -d --build
-curl http://localhost/api/health   # ผ่าน nginx → {"ok":true}
+docker compose logs -f nginx          # รอจน certbot ได้ certificate (ครั้งแรกไม่ถึงนาที)
+curl https://<DOMAIN>/api/health      # → {"ok":true}
 ```
+
+ไม่ต้องตั้งค่าอะไรนอกจาก `.env`: nginx ขอและต่ออายุ certificate จาก Let's Encrypt เอง, ตารางใน DB ถูกสร้างตอนเริ่มครั้งแรก,
+บัญชีแอดมินถูกสร้างจาก `.env`
+
+ถ้า DNS ยังไม่ชี้มาตอน start เว็บจะยังเข้าไม่ได้ (port 443 ยังไม่เปิด) — nginx ลองขอ certificate ใหม่ทุก 15 นาที
+หรือสั่ง `docker compose restart nginx` ให้ลองทันที
 
 | ตัวแปร | ความหมาย |
 |---|---|
-| `POSTGRES_PASSWORD` | รหัสผ่าน DB |
-| `APP_SECRET` | ใช้เซ็นลิงก์ดาวน์โหลด — สุ่มด้วย `openssl rand -hex 32` (ไม่ตั้ง = API ดาวน์โหลดไม่ทำงาน) |
+| `DOMAIN` | โดเมนของร้าน เช่น `shop.example.com` (ไม่ต้องมี `https://`) |
+| `ADMIN_EMAIL` `ADMIN_PASSWORD` | บัญชีแอดมิน — ถูกตั้งตามนี้ทุกครั้งที่ API เริ่มทำงาน จะเปลี่ยนรหัส (หรือลืมรหัส) ให้แก้ที่นี่แล้ว `docker compose up -d` · ถ้ารหัสมี `$` หรือ `#` ให้ครอบด้วย `'…'` |
 | `STRIPE_SECRET_KEY` | `sk_test_…` |
 | `STRIPE_WEBHOOK_SECRET` | `whsec_…` จากหน้า webhook ของ Stripe |
 | `NEXT_PUBLIC_STRIPE_PK` | `pk_test_…` — ฝังตอน build หน้าเว็บ เปลี่ยนแล้วต้อง `docker compose build web` |
 | `GOOGLE_CLIENT_ID` | ไม่บังคับ — OAuth client ID (Web application) สำหรับปุ่ม "ดำเนินการต่อด้วย Google" เว้นว่าง = ไม่แสดงปุ่ม ฝังตอน build เช่นกัน |
+| `POSTGRES_PASSWORD` | ไม่บังคับ — Postgres ไม่เปิด port ออกนอกเครื่องและมีแค่ `api` ที่ต่อถึง จึงใช้ค่าเริ่มต้นได้ ถ้าจะตั้งต้องตั้งก่อน start ครั้งแรก (ตัวอักษร/ตัวเลขเท่านั้น) |
+| `APP_SECRET` | ไม่บังคับ — กุญแจเซ็นลิงก์ดาวน์โหลด ไม่ตั้ง = สุ่มใหม่ทุกครั้งที่ API start (ลิงก์อายุ 5 นาทีที่ออกไว้ก่อน restart จะใช้ไม่ได้) |
 
 > **ฐานข้อมูล:** `db/schema.sql` รันเฉพาะตอน volume `pgdata` ถูกสร้างครั้งแรก ถ้าเคยรัน schema รุ่นก่อนไว้แล้ว
 > ต้องลบ volume (`docker compose down -v` — ข้อมูลหายทั้งหมด) หรือเขียน migration เอง
 
-### nginx
+### แอป desktop และมือถือ
 
-nginx เป็น container ของ project `lab-docker` บน VPS — compose นี้ต่อ `api`/`web` เข้า network `lab-docker_default`
-ด้วย alias `ds-api` / `ds-web` (ชื่อ `api` ชนกับ project อื่น)
+ทั้งสองตัวถูก build โดยฝังที่อยู่ของร้านไว้ ถ้าใช้โดเมนของตัวเองต้อง build ใหม่: desktop แก้ `SITE` ใน `desktop/main.js`
+และลิงก์ใน `desktop/offline.html` แล้ว `npm run dist` · มือถือแก้ URL ในโปรเจกต์ App Inventor
+
+### VPS ของ sukpat.dev (nginx กลาง)
+
+เครื่องนั้น port 80/443 เป็นของ nginx ใน project `lab-docker` ที่ใช้ร่วมกับ project อื่น จึงปิด nginx ของ compose นี้
+แล้วต่อ `api`/`web` เข้า network `lab-docker_default` ด้วย alias `ds-api` / `ds-web` แทน — เพิ่มใน `.env` ของเครื่องนั้น:
+
+```bash
+COMPOSE_FILE=docker-compose.yml:lab-docker/compose.yml
+```
 
 ต้องมี cert ที่ `/etc/letsencrypt/live/digital-store.sukpat.dev/` ก่อน แล้ว:
 
 ```bash
-cp nginx/digital-store.sukpat.dev.conf ~/lab-docker/nginx/conf.d/
+cp lab-docker/digital-store.sukpat.dev.conf ~/lab-docker/nginx/conf.d/
 docker exec lab-docker-nginx-1 nginx -t && docker exec lab-docker-nginx-1 nginx -s reload
 ```
 
@@ -62,7 +84,7 @@ docker exec lab-docker-nginx-1 nginx -t && docker exec lab-docker-nginx-1 nginx 
 
 Stripe Dashboard (Test mode) → Developers → Webhooks → Add endpoint
 
-- URL: `https://digital-store.sukpat.dev/api/stripe/webhook`
+- URL: `https://<DOMAIN>/api/stripe/webhook`
 - Events: `payment_intent.succeeded`, `payment_intent.payment_failed`
 
 สถานะ PAID / FAILED มาจาก webhook เท่านั้น — ถ้าจ่ายแล้ว order ค้าง PENDING ให้เช็กตรงนี้ก่อน
@@ -70,20 +92,21 @@ Stripe Dashboard (Test mode) → Developers → Webhooks → Add endpoint
 ### Google sign-in (ไม่บังคับ)
 
 Google Cloud Console → APIs & Services → Credentials → OAuth client ID (Web application)
-เพิ่ม `https://digital-store.sukpat.dev` ใน Authorized JavaScript origins แล้วใส่ client ID ใน `GOOGLE_CLIENT_ID`
+เพิ่ม `https://<DOMAIN>` ใน Authorized JavaScript origins แล้วใส่ client ID ใน `GOOGLE_CLIENT_ID`
 
 บัญชีที่สมัครด้วยรหัสผ่านไว้ก่อน แล้วมาเข้าด้วย Google อีเมลเดียวกัน: รหัสผ่านเดิมจะถูกล้าง
 (การสมัครไม่ได้ยืนยันอีเมล จึงไม่รู้ว่าใครตั้งรหัสนั้น) ตั้งรหัสใหม่ได้ที่หน้าโปรไฟล์ — แอดมินที่ใช้หน้า `/admin/login` ต้องมีรหัสผ่าน
 
-### สร้างแอดมิน
+### แอดมิน
 
-ไม่มีหน้าสมัครแอดมิน สมัครเป็นลูกค้าก่อนแล้วเปลี่ยน role ใน DB:
+แอดมินหลักมาจาก `ADMIN_EMAIL` / `ADMIN_PASSWORD` ใน `.env` — เข้าที่ `/admin/login`
+(รหัสที่เปลี่ยนในหน้าโปรไฟล์จะถูกทับด้วยค่าใน `.env` เมื่อ API start ครั้งถัดไป)
+
+ไม่มีหน้าสมัครแอดมิน ถ้าจะเพิ่มคนอื่น ให้สมัครเป็นลูกค้าก่อนแล้วเปลี่ยน role ใน DB:
 
 ```bash
 docker compose exec db psql -U shop -c "UPDATE users SET role='admin' WHERE email='you@example.com';"
 ```
-
-แล้วเข้า `/admin/login`
 
 ### ทดสอบการจ่ายเงิน
 

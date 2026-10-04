@@ -16,7 +16,7 @@ export class HttpError extends Error {
 // ---- shop settings: defaults here, the admin Settings page stores overrides in the settings table ----
 export const SETTING_DEFAULTS = {
   store_name: 'Digital Store',
-  support_email: 'support@sukpat.dev',
+  support_email: `support@${process.env.DOMAIN || 'example.com'}`,
   hero_title: 'สร้างได้มากขึ้น ค้นหาน้อยลง',
   hero_text: 'สินค้าดิจิทัลคัดสรรสำหรับนักออกแบบ นักพัฒนา และครีเอเตอร์อิสระ',
   download_limit: '5',  // downloads per purchased item
@@ -37,6 +37,20 @@ export async function hashPassword(pw) {
 export async function checkPassword(pw, stored) {
   const [salt, hash] = stored.split(':');
   return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), await scrypt(pw, salt, 64));
+}
+
+// ---- first admin: ADMIN_EMAIL / ADMIN_PASSWORD from .env, so a fresh server needs no SQL ----
+export async function seedAdmin() {
+  const email = process.env.ADMIN_EMAIL?.trim().toLowerCase(); // login() looks accounts up lowercased
+  const password = process.env.ADMIN_PASSWORD;
+  if (!email || !password) return;
+  // .env is the source of truth and is re-applied on every start, so editing it is also how a lost
+  // admin password is reset (there is no "forgot password" page)
+  await q(
+    `INSERT INTO users (email, name, password_hash, role) VALUES ($1, 'Admin', $2, 'admin')
+     ON CONFLICT (email) DO UPDATE SET role = 'admin', password_hash = EXCLUDED.password_hash,
+       disabled = false, failed_logins = 0, locked_until = NULL`,
+    [email, await hashPassword(password)]);
 }
 
 // ---- sessions: opaque Bearer tokens (App Inventor can't use cookies) ----
@@ -80,10 +94,9 @@ export const audit = (userId, action, req, detail = null) =>
   q('INSERT INTO audit_log (user_id, action, detail, ip) VALUES ($1, $2, $3, $4)', [userId, action, detail, req.ip]);
 
 // ---- signed download URLs (HMAC, 5 min) ----
-const secret = () => {
-  if (!process.env.APP_SECRET) throw new Error('APP_SECRET is not set');
-  return process.env.APP_SECRET;
-};
+// ponytail: no APP_SECRET in .env = a random key per process. A restart only voids links from the last
+// 5 minutes; set APP_SECRET if the API ever runs as more than one instance.
+const secret = () => (process.env.APP_SECRET ||= crypto.randomBytes(32).toString('hex'));
 export function signDownload(itemId, ttlSec = 300, now = Date.now()) {
   const exp = Math.floor(now / 1000) + ttlSec;
   const sig = crypto.createHmac('sha256', secret()).update(`${itemId}.${exp}`).digest('base64url');
