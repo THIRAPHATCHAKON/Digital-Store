@@ -3,10 +3,59 @@ import { promisify } from 'node:util';
 import pg from 'pg';
 
 pg.types.setTypeParser(1700, Number); // numeric → JS number (prices fit easily)
-export const db = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+export const db = new pg.Pool({
+  connectionString: process.env.DATABASE_URL,
+  // Supabase pooler connections require TLS. Direct connections also work with this setting.
+  ssl: process.env.DATABASE_URL?.includes('supabase') ? { rejectUnauthorized: false } : undefined,
+  max: process.env.VERCEL ? 1 : 10,
+  idleTimeoutMillis: 10000,
+  connectionTimeoutMillis: 10000,
+});
 export const q = (sql, params) => db.query(sql, params);
 
 export const UPLOAD_DIR = process.env.UPLOAD_DIR || './uploads';
+export const useSupabaseStorage = Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
+export async function storageRequest(method, key, { body, contentType, download } = {}) {
+  const bucket = process.env.SUPABASE_STORAGE_BUCKET || 'digital-store';
+  const url = `${process.env.SUPABASE_URL}/storage/v1/object/${bucket}/${key.split('/').map(encodeURIComponent).join('/')}`;
+  const response = await fetch(url, {
+    method,
+    headers: { apikey: process.env.SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
+      ...(contentType ? { 'Content-Type': contentType } : {}) }, body,
+  });
+  if (!response.ok) throw new Error(`Supabase Storage request failed (${response.status})`);
+  return response;
+}
+export async function signedStorageUrl(key, expiresIn = 300, downloadName) {
+  const bucket = process.env.SUPABASE_STORAGE_BUCKET || 'digital-store';
+  const response = await fetch(`${process.env.SUPABASE_URL}/storage/v1/object/sign/${bucket}/${key.split('/').map(encodeURIComponent).join('/')}`, {
+    method: 'POST', headers: { apikey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expiresIn, ...(downloadName ? { download: downloadName } : {}) }),
+  });
+  if (!response.ok) throw new Error(`Supabase signed URL request failed (${response.status})`);
+  const { signedURL } = await response.json();
+  return `${process.env.SUPABASE_URL}/storage/v1${signedURL}`;
+}
+export async function createSignedUploadUrl(key) {
+  const bucket = process.env.SUPABASE_STORAGE_BUCKET || 'digital-store';
+  const encoded = key.split('/').map(encodeURIComponent).join('/');
+  const response = await fetch(`${process.env.SUPABASE_URL}/storage/v1/object/upload/sign/${bucket}/${encoded}`, {
+    method: 'POST', headers: { apikey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  if (!response.ok) throw new Error(`Supabase signed upload request failed (${response.status})`);
+  const result = await response.json();
+  const signed = result.signedURL || `/object/upload/sign/${bucket}/${encoded}?token=${encodeURIComponent(result.token)}`;
+  const projectUrl = process.env.SUPABASE_URL.replace(/\/$/, '');
+  const uploadHost = projectUrl.replace('.supabase.co', '.storage.supabase.co');
+  return {
+    uploadUrl: `${projectUrl}/storage/v1${signed.startsWith('/') ? signed : `/${signed}`}`,
+    uploadEndpoint: `${uploadHost}/storage/v1/upload/resumable`, token: result.token,
+    apikey: process.env.SUPABASE_ANON_KEY || '',
+  };
+}
 export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export class HttpError extends Error {

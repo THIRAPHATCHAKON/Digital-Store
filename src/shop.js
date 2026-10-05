@@ -3,7 +3,7 @@ import { Router } from 'express';
 import Stripe from 'stripe';
 import {
   q, HttpError, EMAIL_RE, UPLOAD_DIR, PUBLIC_SETTINGS, getSettings, optionalAuth, requireAuth,
-  signDownload, verifyDownload, page, filters, numericParams,
+  signDownload, verifyDownload, page, filters, numericParams, useSupabaseStorage, signedStorageUrl,
 } from './lib.js';
 
 export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || 'sk_test_missing');
@@ -269,5 +269,6 @@ shop.get('/files/:itemId', async (req, res) => {
     `SELECT p.file, p.file_name FROM order_items oi JOIN products p ON p.id = oi.product_id WHERE oi.id = $1`,
     [req.params.itemId]);
   if (!f?.file) throw new HttpError(404, 'ไม่พบไฟล์');
+  if (useSupabaseStorage) return res.redirect(302, await signedStorageUrl(`files/${f.file}`, 300, f.file_name));
   res.download(path.resolve(UPLOAD_DIR, 'files', f.file), f.file_name);
 });

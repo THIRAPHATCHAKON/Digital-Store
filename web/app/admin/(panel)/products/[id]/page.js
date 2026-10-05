@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { api, LICENSES, mb, upload, when } from '../../../../../lib/api';
+import { api, LICENSES, mb, upload, uploadToSignedUrl, when } from '../../../../../lib/api';
 import { useStore } from '../../../../../lib/store';
 import { useDeleteProduct } from '../../../../../lib/deleteProduct';
 import { Icon, statusOptions, Title } from '../../../../../components/ui';
@@ -57,19 +57,48 @@ export default function ProductForm() {
   async function save() {
     const local = Object.fromEntries(Object.entries(check).map(([k, fn]) => [k, fn(f[k])]).filter(([, v]) => v));
     if (Object.keys(local).length) { setErrors(local); document.getElementById(Object.keys(local)[0])?.focus(); return; }
-    const fd = new FormData();
-    Object.entries(f).forEach(([k, v]) => fd.append(k, v));
-    if (cover) fd.append('cover', cover);
-    if (file) fd.append('file', file);
-    setProgress({ loaded: 0, total: (cover?.size ?? 0) + (file?.size ?? 0) || 1 });
-    job.current = upload(isNew ? '/admin/products' : `/admin/products/${id}`, isNew ? 'POST' : 'PUT', fd,
-      (loaded, total) => setProgress({ loaded, total }));
+    const files = [{ field: 'cover', file: cover }, { field: 'file', file }].filter((x) => x.file);
+    const total = files.reduce((sum, x) => sum + x.file.size, 0) || 1;
+    setProgress({ loaded: 0, total });
+    let stagedUploads = [];
     try {
-      await job.current.promise;
+      let saved;
+      const { direct } = await api('/admin/uploads/mode');
+      if (direct) {
+        // Signed URLs let the browser send large files directly to Storage, bypassing Vercel's body limit.
+        const { uploads = [] } = files.length ? await api('/admin/uploads/sign', { method: 'POST', body: { files: files.map(({ field, file: x }) => ({
+          field, name: x.name, size: x.size, type: x.type,
+        })) } }) : {};
+        stagedUploads = uploads.map((u) => `${u.field === 'cover' ? 'covers' : 'files'}/${u.key}`);
+        const perFile = new Map();
+        const jobs = uploads.map((u) => {
+          const source = files.find((x) => x.field === u.field).file;
+          const task = uploadToSignedUrl(u, source, (n) => {
+            perFile.set(u.field, n);
+            setProgress({ loaded: [...perFile.values()].reduce((sum, v) => sum + v, 0), total });
+          });
+          return task;
+        });
+        job.current = { abort: () => jobs.forEach((x) => x.abort()) };
+        await Promise.all(jobs.map((x) => x.promise));
+        saved = await api(isNew ? '/admin/products' : `/admin/products/${id}`, {
+          method: isNew ? 'POST' : 'PUT', body: { ...f, uploads: Object.fromEntries(uploads.map((u) => [u.field, {
+            key: u.key, name: u.name, size: u.size, type: u.type,
+          }])) },
+        });
+        stagedUploads = [];
+      } else {
+        const fd = new FormData();
+        Object.entries(f).forEach(([k, v]) => fd.append(k, v));
+        job.current = upload(isNew ? '/admin/products' : `/admin/products/${id}`, isNew ? 'POST' : 'PUT', fd,
+          (loaded, uploadTotal) => setProgress({ loaded, total: uploadTotal || total }));
+        saved = await job.current.promise;
+      }
       setDirty(false);
       notify(f.status === 'PUBLISHED' ? 'บันทึกและเผยแพร่แล้ว' : 'บันทึกเป็นฉบับร่างแล้ว');
       router.push('/admin/products');
     } catch (e) {
+      if (stagedUploads.length) await api('/admin/uploads/cleanup', { method: 'POST', body: { keys: stagedUploads } }).catch(() => {});
       if (!e.aborted) { setErrors(e.data?.errors ?? {}); notify(e.message); }
     } finally {
       setProgress(null); job.current = null;

@@ -50,6 +50,62 @@ export function upload(path, method, formData, onProgress) {
   return { promise, abort: () => xhr.abort() };
 }
 
+// TUS sends resumable chunks straight to Supabase Storage; file bytes never pass through Vercel.
+export function uploadToSignedUrl(ticket, file, onProgress) {
+  let activeXhr, aborted = false;
+  const request = (method, url, headers, body, onUpload) => new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest(); activeXhr = xhr;
+    xhr.open(method, url);
+    Object.entries(headers).forEach(([k, v]) => v && xhr.setRequestHeader(k, v));
+    if (onUpload) xhr.upload.onprogress = (e) => e.lengthComputable && onUpload(e.loaded);
+    xhr.onload = () => xhr.status >= 200 && xhr.status < 300
+      ? resolve({ status: xhr.status, location: xhr.getResponseHeader('Location'), offset: xhr.getResponseHeader('Upload-Offset') })
+      : reject(new Error(`Supabase Storage ตอบกลับ ${xhr.status}`));
+    xhr.onerror = () => reject(new Error('เชื่อมต่อ Supabase Storage ไม่ได้'));
+    xhr.onabort = () => reject(Object.assign(new Error('ยกเลิกการอัปโหลดแล้ว'), { aborted: true }));
+    xhr.send(body);
+  });
+  const enc = (s) => btoa(unescape(encodeURIComponent(s)));
+  const promise = (async () => {
+    const headers = { 'Tus-Resumable': '1.0.0', apikey: ticket.apikey, 'x-signature': ticket.token };
+    const metadata = { bucketName: ticket.bucketName, objectName: ticket.objectName,
+      contentType: file.type || 'application/octet-stream', cacheControl: '3600' };
+    const created = await request('POST', ticket.uploadEndpoint, { ...headers, 'Upload-Length': String(file.size),
+      'Upload-Metadata': Object.entries(metadata).map(([k, v]) => `${k} ${enc(v)}`).join(',') }, null);
+    if (!created.location) throw new Error('Supabase Storage ไม่ส่ง URL สำหรับอัปโหลดกลับมา');
+    const target = new URL(created.location, ticket.uploadEndpoint).href;
+    const chunkSize = 6 * 1024 * 1024;
+    let offset = 0;
+    let retriesAtOffset = 0;
+    while (offset < file.size) {
+      if (aborted) throw Object.assign(new Error('ยกเลิกการอัปโหลดแล้ว'), { aborted: true });
+      const chunk = file.slice(offset, Math.min(offset + chunkSize, file.size));
+      try {
+        await request('PATCH', target, { ...headers, 'Upload-Offset': String(offset), 'Content-Type': 'application/offset+octet-stream' }, chunk,
+          (loaded) => onProgress(offset + loaded));
+        offset += chunk.size; retriesAtOffset = 0; onProgress(offset);
+      } catch (error) {
+        if (error.aborted) throw error;
+        let recovered = false;
+        let serverOffset = offset;
+        for (let attempt = 0; attempt < 3 && !recovered; attempt++) {
+          await new Promise((r) => setTimeout(r, [1000, 3000, 6000][attempt]));
+          try {
+            const state = await request('HEAD', target, { ...headers, 'Tus-Resumable': '1.0.0' });
+            serverOffset = Number(state.offset);
+            if (Number.isFinite(serverOffset) && serverOffset > offset && serverOffset <= file.size) {
+              offset = serverOffset; retriesAtOffset = 0; onProgress(offset); recovered = true;
+            }
+          } catch {}
+        }
+        if (serverOffset === file.size) { offset = file.size; onProgress(offset); recovered = true; }
+        if (!recovered && retriesAtOffset++ >= 2) throw error;
+      }
+    }
+  })();
+  return { promise, abort: () => { aborted = true; activeXhr?.abort(); } };
+}
+
 // Admin exports need the Bearer header, which a plain <a href> can't send: fetch → blob → click.
 export async function saveFile(path) {
   const res = await fetch('/api' + path, { headers: authHeader() });

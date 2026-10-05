@@ -1,19 +1,15 @@
-import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import express, { Router } from 'express';
 import multer from 'multer';
 import {
   q, HttpError, EMAIL_RE, UPLOAD_DIR, SETTING_DEFAULTS, getSettings, requireAdmin, audit, page, filters,
-  numericParams, toCsv, parseCsv,
+  numericParams, toCsv, parseCsv, useSupabaseStorage, storageRequest, createSignedUploadUrl,
 } from './lib.js';
 import { stripe, CARD, SOLD } from './shop.js';
 
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: (req, file, cb) => cb(null, path.join(UPLOAD_DIR, file.fieldname === 'cover' ? 'covers' : 'files')),
-    filename: (req, file, cb) => cb(null, crypto.randomUUID() + path.extname(file.originalname).toLowerCase()),
-  }),
+  storage: multer.memoryStorage(),
   limits: { fileSize: 500 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const ok = file.fieldname === 'cover'
@@ -23,6 +19,24 @@ const upload = multer({
   },
 }).fields([{ name: 'cover', maxCount: 1 }, { name: 'file', maxCount: 1 }]);
 
+async function persistUpload(f, kind) {
+  if (!f) return null;
+  const filename = crypto.randomUUID() + path.extname(f.originalname).toLowerCase();
+  if (useSupabaseStorage) await storageRequest('POST', `${kind}/${filename}`, { body: f.buffer, contentType: f.mimetype });
+  else {
+    const fs = await import('node:fs/promises');
+    const { mkdir } = await import('node:fs/promises');
+    await mkdir(path.join(UPLOAD_DIR, kind), { recursive: true });
+    await fs.writeFile(path.join(UPLOAD_DIR, kind, filename), f.buffer);
+  }
+  return filename;
+}
+async function removeUpload(kind, filename) {
+  if (!filename) return;
+  if (useSupabaseStorage) await storageRequest('DELETE', `${kind}/${filename}`);
+  else (await import('node:fs/promises')).rm(path.join(UPLOAD_DIR, kind, filename), { force: true });
+}
+
 const testMode = () => !process.env.STRIPE_SECRET_KEY?.startsWith('sk_live_');
 const stripeUrl = (pi) => pi && `https://dashboard.stripe.com/${testMode() ? 'test/' : ''}payments/${pi}`;
 const listResult = (rows, pg) => ({ items: rows.map(({ total_rows, ...r }) => r), total: rows[0]?.total_rows ?? 0, page: pg });
@@ -30,6 +44,36 @@ const listResult = (rows, pg) => ({ items: rows.map(({ total_rows, ...r }) => r)
 export const admin = Router();
 admin.use(requireAdmin); // every route admin-only
 numericParams(admin, 'id');
+
+admin.get('/uploads/mode', (req, res) => res.json({ direct: useSupabaseStorage }));
+
+admin.post('/uploads/sign', async (req, res) => {
+  if (!useSupabaseStorage) throw new HttpError(501, 'การอัปโหลดตรงต้องตั้งค่า Supabase Storage');
+  const files = Array.isArray(req.body?.files) ? req.body.files : [];
+  if (!files.length || files.length > 2) throw new HttpError(422, 'รายการไฟล์ไม่ถูกต้อง');
+  const uploads = await Promise.all(files.map(async (f) => {
+    const kind = f.field === 'cover' ? 'covers' : f.field === 'file' ? 'files' : null;
+    const name = String(f.name ?? '');
+    const type = String(f.type ?? 'application/octet-stream');
+    const size = Number(f.size);
+    const valid = kind === 'covers' ? /^image\/(jpeg|png)$/.test(type) && size <= 2 * 1048576
+      : kind === 'files' && /\.(zip|pdf|mp4)$/i.test(name) && size > 0 && size <= 500 * 1048576;
+    if (!valid) throw new HttpError(422, 'ประเภทหรือขนาดไฟล์ไม่ถูกต้อง', { errors: { [f.field]: 'ประเภทหรือขนาดไฟล์ไม่ถูกต้อง' } });
+    const key = `${kind}/${crypto.randomUUID()}${path.extname(name).toLowerCase()}`;
+    return { field: f.field, key: key.slice(kind.length + 1), name: name.slice(0, 255), size, type,
+      bucketName: process.env.SUPABASE_STORAGE_BUCKET || 'digital-store', objectName: key,
+      ...(await createSignedUploadUrl(key)) };
+  }));
+  res.json({ uploads });
+});
+admin.post('/uploads/cleanup', async (req, res) => {
+  const keys = Array.isArray(req.body?.keys) ? req.body.keys : [];
+  for (const key of keys) {
+    if (!/^(covers|files)\/[a-f0-9-]+\.(jpg|jpeg|png|zip|pdf|mp4)$/i.test(key)) throw new HttpError(422, 'รายการไฟล์ไม่ถูกต้อง');
+  }
+  await Promise.all(keys.map((key) => removeUpload(...key.split('/', 2))));
+  res.json({ removed: keys.length });
+});
 
 // ---------- dashboard: /stats?days=30 ----------
 admin.get('/stats', async (req, res) => {
@@ -121,18 +165,24 @@ const productRow = (b) => ({
 async function saveProduct(req, id) {
   const old = id ? (await q('SELECT * FROM products WHERE id = $1', [id])).rows[0] : {};
   if (id && !old) throw new HttpError(404, 'ไม่พบสินค้า');
+  const direct = useSupabaseStorage && req.body?.uploads;
   const cover = req.files?.cover?.[0], file = req.files?.file?.[0];
+  const uploadedCover = direct && req.body.uploads.cover;
+  const uploadedFile = direct && req.body.uploads.file;
+  if (uploadedCover && !/^[a-f0-9-]{36}\.(jpg|jpeg|png)$/i.test(uploadedCover.key ?? '')) throw new HttpError(422, 'ไฟล์ภาพปกไม่ถูกต้อง');
+  if (uploadedFile && !/^[a-f0-9-]{36}\.(zip|pdf|mp4)$/i.test(uploadedFile.key ?? '')) throw new HttpError(422, 'ไฟล์สินค้าไม่ถูกต้อง');
   const b = { ...req.body, status: req.body.status === 'PUBLISHED' ? 'PUBLISHED' : 'DRAFT' };
-  const errors = productErrors(b, file || old.file, await categorySlugs());
-  if (Object.keys(errors).length) { // don't leave orphaned uploads behind a failed save
-    await Promise.all([cover, file].filter(Boolean).map((f) => fs.rm(f.path, { force: true })));
+  const errors = productErrors(b, uploadedFile || file || old.file, await categorySlugs());
+  if (Object.keys(errors).length) {
     throw new HttpError(422, `บันทึกไม่สำเร็จ — มี ${Object.keys(errors).length} ช่องที่ต้องแก้`, { errors });
   }
   const r = productRow(b);
+  const coverName = uploadedCover?.key ?? await persistUpload(cover, 'covers');
+  const fileName = uploadedFile?.key ?? await persistUpload(file, 'files');
   const vals = [r.name, r.category, r.price, r.compare_at, r.short_description, r.description, r.seller, r.tags, r.license,
-    r.version, cover?.filename ?? old.cover ?? null, file?.filename ?? old.file ?? null,
-    file?.originalname ?? old.file_name ?? null, file?.size ?? old.file_size ?? null,
-    file ? path.extname(file.originalname).slice(1).toUpperCase() : old.file_types ?? null, b.status];
+    r.version, coverName ?? old.cover ?? null, fileName ?? old.file ?? null,
+    uploadedFile?.name ?? file?.originalname ?? old.file_name ?? null, uploadedFile?.size ?? file?.size ?? old.file_size ?? null,
+    uploadedFile ? path.extname(uploadedFile.name).slice(1).toUpperCase() : file ? path.extname(file.originalname).slice(1).toUpperCase() : old.file_types ?? null, b.status];
   const { rows: [p] } = id
     ? await q(`UPDATE products SET name=$1, category=$2, price=$3, compare_at=$4, short_description=$5, description=$6,
                  seller=$7, tags=$8, license=$9, version=$10, cover=$11, file=$12, file_name=$13, file_size=$14,
@@ -142,14 +192,20 @@ async function saveProduct(req, id) {
                  license, version, cover, file, file_name, file_size, file_types, status)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *`, vals);
   // replaced files are unreachable now
-  if (cover && old.cover) await fs.rm(path.join(UPLOAD_DIR, 'covers', old.cover), { force: true });
-  if (file && old.file) await fs.rm(path.join(UPLOAD_DIR, 'files', old.file), { force: true });
+  if ((cover || uploadedCover) && old.cover) await removeUpload('covers', old.cover);
+  if ((file || uploadedFile) && old.file) await removeUpload('files', old.file);
   await audit(req.user.id, id ? 'product_update' : 'product_create', req, String(p.id));
   return p;
 }
 
-admin.post('/products', upload, async (req, res) => res.status(201).json(await saveProduct(req, null)));
-admin.put('/products/:id', upload, async (req, res) => res.json(await saveProduct(req, req.params.id)));
+admin.post('/products', async (req, res, next) => {
+  if (req.is('multipart/form-data')) return upload(req, res, (err) => err ? next(err) : saveProduct(req, null).then((p) => res.status(201).json(p), next));
+  res.status(201).json(await saveProduct(req, null));
+});
+admin.put('/products/:id', async (req, res, next) => {
+  if (req.is('multipart/form-data')) return upload(req, res, (err) => err ? next(err) : saveProduct(req, req.params.id).then((p) => res.json(p), next));
+  res.json(await saveProduct(req, req.params.id));
+});
 
 // Publish/unpublish by id list: { ids: [], status }
 admin.patch('/products', async (req, res) => {
@@ -175,8 +231,7 @@ admin.delete('/products/:id', async (req, res) => {
 
   await q('DELETE FROM products WHERE id = $1', [p.id]);
   await Promise.all([
-    p.cover && fs.rm(path.join(UPLOAD_DIR, 'covers', p.cover), { force: true }),
-    p.file && fs.rm(path.join(UPLOAD_DIR, 'files', p.file), { force: true }),
+    removeUpload('covers', p.cover), removeUpload('files', p.file),
   ]);
   await audit(req.user.id, 'product_delete', req, String(p.id));
   res.status(204).end();

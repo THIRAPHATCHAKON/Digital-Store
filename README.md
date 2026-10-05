@@ -122,6 +122,18 @@ cd web && npm install
 API_ORIGIN=http://localhost:4000 npm run dev  # proxy /api ไปที่ backend
 ```
 
+## Deploy บน Vercel + Supabase
+
+1. สร้าง Supabase project และเปิด SQL Editor รัน `db/schema.sql` หนึ่งครั้งเพื่อสร้างตารางและหมวดหมู่เริ่มต้น
+2. สร้าง Storage bucket ชื่อ `digital-store` โดยตั้งเป็น private (API ใช้ service role key เพื่อจัดการไฟล์) และตั้ง file size limit ของ bucket/global ตามขนาดไฟล์ที่จะขาย
+3. ใน Vercel import repository นี้ แล้วตั้ง Root Directory เป็น `web` และเปิด Include files outside the Root Directory หากตัวเลือกนี้ปรากฏ เพื่อให้ function ที่ `web/api/[...path].js` ใช้ backend ใน `src/` ได้
+4. ตั้ง Environment Variables ใน Vercel: `DATABASE_URL` (Supabase Session pooler URI), `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_STORAGE_BUCKET`, `APP_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `NEXT_PUBLIC_STRIPE_PK`, และ `GOOGLE_CLIENT_ID` (ถ้าใช้ Google sign-in)
+5. Deploy แล้วตั้ง Stripe webhook ไปที่ `https://<โดเมน>/api/stripe/webhook` โดยเลือก `payment_intent.succeeded` และ `payment_intent.payment_failed`
+
+ใช้ `APP_SECRET` เป็นค่าคงที่ยาวและสุ่ม เพื่อให้ลิงก์ดาวน์โหลดที่ออกจาก serverless function ทุก instance ตรวจสอบได้เหมือนกัน อย่าเปิดเผย `SUPABASE_SERVICE_ROLE_KEY` ในตัวแปร `NEXT_PUBLIC_*` และควรตั้งรหัสผ่านแอดมินก่อน deploy
+
+ไฟล์สินค้าจากหลังบ้านอัปโหลดตรงจากเบราว์เซอร์เข้า Supabase Storage ด้วย signed token และ TUS resumable chunks (ขนาด chunk 6 MB) จึงไม่ผ่าน Vercel Function; เมื่ออัปโหลดเสร็จ API จะบันทึกเฉพาะ metadata ลงฐานข้อมูล ตั้ง Global และ bucket file size limit ใน Supabase ให้รองรับขนาดไฟล์ที่ต้องการ โดย Supabase Free จำกัดไฟล์ได้สูงสุด 50 MB ส่วนแผน Pro รองรับสูงสุด 500 GB และ Supabase แนะนำ TUS สำหรับไฟล์เกิน 6 MB
+
 ## API (สรุป)
 
 ทุก endpoint อยู่ใต้ `/api` · auth ใช้ `Authorization: Bearer <token>` (ไม่ใช้ cookie เพื่อให้ App Inventor ใช้ได้)

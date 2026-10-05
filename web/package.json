@@ -1,6 +1,7 @@
 {
   "name": "digital-store-web",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -9,8 +10,12 @@
   "dependencies": {
     "@stripe/react-stripe-js": "^3.9.0",
     "@stripe/stripe-js": "^7.9.0",
+    "express": "^5.1.0",
+    "multer": "^2.0.2",
     "next": "^15.5.0",
+    "pg": "^8.16.3",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "stripe": "^18.5.0"
   }
 }
