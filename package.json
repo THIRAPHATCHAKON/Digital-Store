@@ -2,6 +2,9 @@
   "name": "digital-store-api",
   "private": true,
   "type": "module",
+  "workspaces": [
+    "web"
+  ],
   "scripts": {
     "start": "node src/app.js",
     "dev": "node --env-file=.env --watch src/app.js",

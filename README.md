@@ -116,17 +116,16 @@ docker compose exec db psql -U shop -c "UPDATE users SET role='admin' WHERE emai
 ## พัฒนาในเครื่อง
 
 ```bash
-npm install && npm test                       # backend unit test
+npm install && npm test                       # ติดตั้ง workspace ทั้งหมดและรัน backend unit test
 npm run dev                                   # ต้องมี .env + Postgres
-cd web && npm install
-API_ORIGIN=http://localhost:4000 npm run dev  # proxy /api ไปที่ backend
+cd web && API_ORIGIN=http://localhost:4000 npm run dev  # proxy /api ไปที่ backend
 ```
 
 ## Deploy บน Vercel + Supabase
 
 1. สร้าง Supabase project และเปิด SQL Editor รัน `db/schema.sql` หนึ่งครั้งเพื่อสร้างตารางและหมวดหมู่เริ่มต้น
 2. สร้าง Storage bucket ชื่อ `digital-store` โดยตั้งเป็น private (API ใช้ service role key เพื่อจัดการไฟล์) และตั้ง file size limit ของ bucket/global ตามขนาดไฟล์ที่จะขาย
-3. ใน Vercel import repository นี้ แล้วตั้ง Root Directory เป็น `web` และเปิด Include files outside the Root Directory หากตัวเลือกนี้ปรากฏ เพื่อให้ function ที่ `web/api/[...path].js` ใช้ backend ใน `src/` ได้
+3. ใน Vercel import repository นี้ แล้วตั้ง Root Directory เป็น `web` และเปิด Include files outside the Root Directory หากตัวเลือกนี้ปรากฏ ตัวโปรเจกต์ใช้ npm workspace ที่ root เพื่อให้ Next.js และ backend ใน `src/` ใช้ dependencies ชุดเดียวกัน
 4. ตั้ง Environment Variables ใน Vercel: `DATABASE_URL` (Supabase Session pooler URI), `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_STORAGE_BUCKET`, `APP_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `NEXT_PUBLIC_STRIPE_PK`, และ `GOOGLE_CLIENT_ID` (ถ้าใช้ Google sign-in)
 5. Deploy แล้วตั้ง Stripe webhook ไปที่ `https://<โดเมน>/api/stripe/webhook` โดยเลือก `payment_intent.succeeded` และ `payment_intent.payment_failed`
 
